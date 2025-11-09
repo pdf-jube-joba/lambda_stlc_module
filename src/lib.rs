@@ -1,10 +1,12 @@
 // simply typed lambda calculus kernel
-mod kernel;
+pub mod kernel;
 // simply typed lambda calculus surface
 //   - before name resolution and desugaring
 //   - includes nested modules and module parameters
-mod surface;
+pub mod surface;
+// surface/kernel pretty printing
+pub mod printing;
 // string -> surface
-mod parser;
+pub mod parser;
 // surface -> kernel elaborator
-mod elaborator;
+pub mod elaborator;

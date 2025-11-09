@@ -1,23 +1,10 @@
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
-pub struct TyVar(Rc<String>);
-
-impl TyVar {
-    pub fn new(name: &str) -> Self {
-        TyVar(Rc::new(name.to_string()))
-    }
-    pub fn name(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum Type {
     Bool,
     Nat,
     Arrow(Box<Type>, Box<Type>),
-    Var(TyVar), // for parameter, not for unification
 }
 
 impl PartialEq for Type {
@@ -26,7 +13,6 @@ impl PartialEq for Type {
             (Type::Bool, Type::Bool) => true,
             (Type::Nat, Type::Nat) => true,
             (Type::Arrow(a1, b1), Type::Arrow(a2, b2)) => a1 == a2 && b1 == b2,
-            (Type::Var(v1), Type::Var(v2)) => Rc::ptr_eq(&v1.0, &v2.0),
             _ => false,
         }
     }
@@ -83,9 +69,9 @@ pub enum Term {
     ConstantRef(Rc<DefinedConstant>),
 }
 
-fn substitute(term: Term, var: &TermVar, value: Term) -> Term {
+pub fn substitute(term: Term, var: &TermVar, value: &Term) -> Term {
     match term {
-        Term::Var(ref v) if v == var => value,
+        Term::Var(ref v) if v == var => value.clone(),
         Term::Abs {
             param,
             param_type,
@@ -96,7 +82,7 @@ fn substitute(term: Term, var: &TermVar, value: Term) -> Term {
             body: Box::new(substitute(*body, var, value)),
         },
         Term::App { func, arg } => Term::App {
-            func: Box::new(substitute(*func, var, value.clone())),
+            func: Box::new(substitute(*func, var, value)),
             arg: Box::new(substitute(*arg, var, value)),
         },
         Term::If {
@@ -104,8 +90,8 @@ fn substitute(term: Term, var: &TermVar, value: Term) -> Term {
             then_branch,
             else_branch,
         } => Term::If {
-            cond: Box::new(substitute(*cond, var, value.clone())),
-            then_branch: Box::new(substitute(*then_branch, var, value.clone())),
+            cond: Box::new(substitute(*cond, var, value)),
+            then_branch: Box::new(substitute(*then_branch, var, value)),
             else_branch: Box::new(substitute(*else_branch, var, value)),
         },
         Term::Succ(t) => Term::Succ(Box::new(substitute(*t, var, value))),
@@ -115,11 +101,19 @@ fn substitute(term: Term, var: &TermVar, value: Term) -> Term {
     }
 }
 
-fn reduce_top(term: &Term) -> Option<Term> {
+pub fn substitute_with_mapping(term: Term, map: &Vec<(TermVar, Term)>) -> Term {
+    let mut result = term;
+    for (var, value) in map {
+        result = substitute(result, var, value);
+    }
+    result
+}
+
+pub fn reduce_top(term: &Term) -> Option<Term> {
     match term {
         Term::App { func, arg } => {
             if let Term::Abs { param, body, .. } = func.as_ref() {
-                Some(substitute(*body.clone(), param, *arg.clone()))
+                Some(substitute(*body.clone(), param, arg))
             } else {
                 None
             }
