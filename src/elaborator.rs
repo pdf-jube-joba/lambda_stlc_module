@@ -61,6 +61,118 @@ impl ModuleElaborated {
     }
 }
 
+pub struct ElaboratedTreeManager {
+    root: Rc<RefCell<ModuleElaborated>>,
+    current: Rc<RefCell<ModuleElaborated>>,
+}
+
+impl Default for ElaboratedTreeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ElaboratedTreeManager {
+    fn new() -> Self {
+        let root = Rc::new(RefCell::new(ModuleElaborated {
+            name: "root".to_string(),
+            parameters: vec![],
+            items: vec![],
+            child_modules: vec![],
+            parent: None,
+        }));
+        ElaboratedTreeManager {
+            root: root.clone(),
+            current: root,
+        }
+    }
+    fn moveto_parent(&mut self) {
+        let parent = self
+            .current
+            .borrow()
+            .parent
+            .as_ref()
+            .and_then(|weak_parent| weak_parent.upgrade())
+            .expect("No parent module");
+        self.current = parent;
+    }
+    fn add_child_and_moveto(&mut self, name: String, parameters: Vec<(TermVar, Type)>) {
+        let new_module = Rc::new(RefCell::new(ModuleElaborated {
+            name,
+            parameters,
+            items: vec![],
+            child_modules: vec![],
+            parent: Some(Rc::downgrade(&self.current)),
+        }));
+        self.current
+            .borrow_mut()
+            .child_modules
+            .push(new_module.clone());
+        self.current = new_module;
+    }
+    fn add_item(&mut self, item: ModuleItem) {
+        self.current.borrow_mut().items.push(item);
+    }
+    fn path_parameters_of_current(
+        &self,
+        path: ImportPath,
+    ) -> Result<Vec<Vec<(TermVar, Type)>>, String> {
+        let (mut start, named_segments) = match path {
+            ImportPath::Parent(num, named_segments) => {
+                let mut current = self.current.clone();
+                for _ in 0..num {
+                    let parent = current
+                        .borrow()
+                        .parent
+                        .as_ref()
+                        .and_then(|weak_parent| weak_parent.upgrade())
+                        .ok_or("Cannot go up from root module")?;
+                    current = parent;
+                }
+                (current, named_segments)
+            }
+            ImportPath::FromRoot(named_segments) => (self.root.clone(), named_segments),
+        };
+        let mut path_param = vec![];
+
+        for seg in named_segments {
+            let NamedSegment {
+                module_name,
+                parameters: _,
+            } = seg;
+            let next_module = start
+                .borrow()
+                .child_modules
+                .iter()
+                .find(|child| child.borrow().name == module_name)
+                .ok_or(format!("Module {} not found", module_name))?
+                .clone();
+            path_param.push(next_module.borrow().parameters.to_vec());
+            start = next_module;
+        }
+
+        Ok(path_param)
+    }
+    fn current_context(&self) -> Vec<(TermVar, Type)> {
+        let mut v = vec![];
+
+        let mut current = Some(self.current.clone());
+        while let Some(curr) = current {
+            for (term_var, ty) in curr.borrow().parameters.iter().rev() {
+                v.push((term_var.clone(), ty.clone()));
+            }
+            current = curr
+                .borrow()
+                .parent
+                .as_ref()
+                .and_then(|weak_parent| weak_parent.upgrade());
+        }
+
+        v.reverse();
+        v
+    }
+}
+
 // instantiated module with concrete arguments
 pub struct ModuleInstantiated {
     pub module_template: Rc<RefCell<ModuleElaborated>>, // only for reference
