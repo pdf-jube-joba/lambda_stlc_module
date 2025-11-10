@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt::Display;
+use std::rc::Rc;
 
 use crate::{
     kernel::{self, Term, Type},
@@ -168,5 +170,13 @@ impl Display for Module {
             writeln!(f, "  {}", declaration)?;
         }
         write!(f, "}}")
+    }
+}
+
+pub fn print_traverse_module_tree(tree: Rc<RefCell<crate::elaborator::ModuleElaborated>>) {
+    let tree_borrowed = tree.borrow();
+    println!("Module: {}", tree_borrowed.name);
+    for child in &tree_borrowed.child_modules {
+        print_traverse_module_tree(Rc::clone(child));
     }
 }

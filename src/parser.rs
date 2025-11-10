@@ -1,4 +1,4 @@
-use crate::surface::TermAST;
+use crate::surface::{TermAST, TypeAST};
 use logos::Logos;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -112,11 +112,11 @@ impl<'a> Parser<'a> {
     }
 
     fn bump_if(&mut self, expected: Token) -> bool {
-        if let Some(token) = self.peek() {
-            if *token == expected {
-                self.next();
-                return true;
-            }
+        if let Some(token) = self.peek()
+            && *token == expected
+        {
+            self.next();
+            return true;
         }
         false
     }
@@ -151,35 +151,46 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // <type> -> <type> | Nat | Bool | (<type>)
+    // A -> B -> C is parsed as A -> (B -> C)
+    // take until end or unexpected token
     pub fn parse_type(&mut self) -> Result<crate::surface::TypeAST, String> {
-        match self.peek() {
-            Some(Token::BoolType) => {
-                self.next();
-                Ok(crate::surface::TypeAST::BoolAST)
+        let mut tys: Vec<TypeAST> = vec![];
+        while let Some(tok) = self.peek() {
+            match tok {
+                Token::BoolType => {
+                    self.next();
+                    tys.push(crate::surface::TypeAST::BoolAST);
+                }
+                Token::NatType => {
+                    self.next();
+                    tys.push(crate::surface::TypeAST::NatAST);
+                }
+                Token::LParen => {
+                    self.next(); // consume '('
+                    let inner = self.parse_type()?;
+                    self.expect(Token::RParen)?;
+                    tys.push(inner);
+                }
+                _ => {}
             }
-            Some(Token::NatType) => {
-                self.next();
-                Ok(crate::surface::TypeAST::NatAST)
+            if !self.bump_if(Token::Arrow) {
+                break;
             }
-            Some(Token::LParen) => {
-                self.next(); // consume '('
-                let left = self.parse_type()?;
-                self.expect(Token::Arrow)?;
-                let right = self.parse_type()?;
-                self.expect(Token::RParen)?;
-                Ok(crate::surface::TypeAST::Arrow(
-                    Box::new(left),
-                    Box::new(right),
-                ))
+        }
+        // concatenate ty
+        if tys.is_empty() {
+            Err("Expected type, but found none".to_string())
+        } else {
+            let mut ty_ast = tys.pop().unwrap();
+            for ty in tys.into_iter().rev() {
+                ty_ast = crate::surface::TypeAST::Arrow(Box::new(ty), Box::new(ty_ast));
             }
-            _ => Err(format!(
-                "Unexpected token at position {}",
-                self.tokens.get(self.pos).map(|t| t.span.start).unwrap_or(0)
-            )),
+            Ok(ty_ast)
         }
     }
 
-    pub fn parse_exp(&mut self) -> Result<TermAST, String> {
+    pub fn parse_atom(&mut self) -> Result<TermAST, String> {
         match self.peek() {
             Some(Token::True) => {
                 self.next();
@@ -199,6 +210,23 @@ impl<'a> Parser<'a> {
                 self.tokens.get(self.pos).map(|t| t.span.start).unwrap_or(0)
             )),
         }
+    }
+
+    pub fn parse_exp(&mut self) -> Result<TermAST, String> {
+        let mut exp = self.parse_atom()?;
+        loop {
+            let save_pos = self.pos;
+            if let Ok(arg) = self.parse_atom() {
+                exp = TermAST::App {
+                    func: Box::new(exp),
+                    arg: Box::new(arg),
+                };
+            } else {
+                self.pos = save_pos; // backtrack
+                break;
+            }
+        }
+        Ok(exp)
     }
 
     fn parse_if(&mut self) -> Result<TermAST, String> {
@@ -249,13 +277,14 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
 
         if let Some(Token::Period) = self.peek() {
-            Err("Module access with multiple periods is not supported".to_string())
-        } else {
+            self.next(); // consume '.'
             let next_name = self.expect_ident()?;
             Ok(TermAST::Access {
                 module_name: name,
                 name: next_name,
             })
+        } else {
+            Ok(TermAST::Identifier(name))
         }
     }
 
@@ -400,8 +429,54 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parse(input: &str) -> Result<crate::surface::Module, String> {
+pub fn parse(input: &str) -> Result<Vec<crate::surface::Module>, String> {
     let tokens = lex(input)?;
     let mut parser = Parser::new(&tokens);
-    parser.parse_module()
+    let mut modules = Vec::new();
+    while let Some(token) = parser.peek() {
+        match token {
+            Token::Module => {
+                let module = parser.parse_module()?;
+                modules.push(module);
+            }
+            _ => {
+                return Err(format!(
+                    "Unexpected token at position {}",
+                    parser
+                        .tokens
+                        .get(parser.pos)
+                        .map(|t| t.span.start)
+                        .unwrap_or(0)
+                ));
+            }
+        }
+    }
+    Ok(modules)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn type_parse_test() {
+        fn print_and_unwrap(input: &str) {
+            let tokens = lex(input).unwrap();
+            let mut parser = Parser::new(&tokens);
+            let ty = parser.parse_type().unwrap();
+            println!("{:?}", ty);
+        }
+        print_and_unwrap("Nat -> Bool -> Nat");
+        print_and_unwrap("(Nat -> Bool) -> Nat");
+        print_and_unwrap("Nat -> (Bool -> Nat)");
+    }
+    #[test]
+    fn defs_parse_test() {
+        let t = "def x: Nat = 0; def y: Bool = True;";
+        let tokens = lex(t).unwrap();
+        let mut parser = Parser::new(&tokens);
+        let def1 = parser.parse_definition().unwrap();
+        println!("{:?}", def1);
+        let def2 = parser.parse_definition().unwrap();
+        println!("{:?}", def2);
+    }
 }

@@ -32,13 +32,18 @@ async fn main() {
 }
 
 async fn run(Json(Req { text }): Json<Req>) -> Json<Resp> {
-    let parsed = match lambda_stlc_module::parser::parse(&text) {
+    let parsed: Vec<_> = match lambda_stlc_module::parser::parse(&text) {
         Ok(ok) => ok,
         Err(err) => {
             let result = format!("Parse error\n{}", err);
             return Json(Resp { result });
         }
     };
-    let result = format!("{}", parsed);
+    let result = parsed
+        .iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .to_string();
     Json(Resp { result })
 }

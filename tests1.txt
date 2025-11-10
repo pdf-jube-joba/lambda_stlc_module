@@ -1,0 +1,9 @@
+module t {
+    def zero: Nat = 0;
+    def id: Nat -> Nat = fun x: Nat => x;
+    def apply: (Nat -> Bool) -> Bool = fun f: (Nat -> Bool) => f 0;
+}
+
+module t2 f: Nat -> Nat; b: Nat; {
+    def f2: Nat = f b;
+}

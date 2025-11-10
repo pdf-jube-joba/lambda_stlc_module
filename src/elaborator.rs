@@ -81,22 +81,16 @@ pub struct ModuleEnv {
 impl ModuleEnv {
     fn get_imported_module_item(&self, module_name: &str, item_name: &str) -> Option<&ModuleItem> {
         let module = self.import_modules.get(module_name)?;
-        module.items.iter().find_map(|item| match item {
-            ModuleItem::Definition { term } => {
-                if term.name == item_name {
-                    Some(item)
-                } else {
-                    None
-                }
-            }
+        module.items.iter().find(|item| match item {
+            ModuleItem::Definition { term } => term.name == item_name,
         })
     }
 }
 
 enum PointedByIdentifier {
-    TermVar(TermVar),
     DefinedConstant(Rc<DefinedConstant>),
     TermParam(TermVar),
+    // TermScope(TermVar),
 }
 
 pub struct Elaborator {
@@ -104,6 +98,12 @@ pub struct Elaborator {
 
     check_stack_envs: Vec<ModuleEnv>,
     current_elaborated_tree: Rc<RefCell<ModuleElaborated>>, // where to put elaborated items
+}
+
+impl Default for Elaborator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Elaborator {
@@ -122,10 +122,10 @@ impl Elaborator {
             current_elaborated_tree: root_tree,
         }
     }
-    pub fn name_resolution_from_current(&self, name: &str) -> Option<PointedByIdentifier> {
-        self.current_elaborated_tree.borrow().name_resolution(name)
+    pub fn root(&self) -> Rc<RefCell<ModuleElaborated>> {
+        self.elaborated_module_root.clone()
     }
-    pub fn name_resolution(&self, name: &str) -> Option<PointedByIdentifier> {
+    fn name_resolution(&self, name: &str) -> Option<PointedByIdentifier> {
         // check from current to parent
         let mut current = Some(self.current_elaborated_tree.clone());
         while let Some(curr) = current {
@@ -143,7 +143,8 @@ impl Elaborator {
     pub fn add_to_root_module(&mut self, root: Module) -> Result<(), String> {
         self.elab_module_rec(&root)
     }
-    pub fn elab_module_rec<'a>(&mut self, current: &'a Module) -> Result<(), String> {
+    pub fn elab_module_rec(&mut self, current: &Module) -> Result<(), String> {
+        println!("Elaborating module {}", current.name);
         let Module {
             name,
             parameters,
@@ -151,7 +152,6 @@ impl Elaborator {
         } = current;
 
         // set clean elaborated module to current
-
         let parent = self.current_elaborated_tree.clone();
         let current_elab = Rc::new(RefCell::new(ModuleElaborated {
             name: name.clone(),
@@ -213,7 +213,7 @@ impl Elaborator {
                         });
                 }
                 Declaration::Import { path, name_as } => {
-                    let (mut start, mut segments) = match path {
+                    let (mut start, segments) = match path {
                         ImportPath::Parent(up_levels, segments) => {
                             let mut current = self.current_elaborated_tree.clone();
                             for _ in 0..*up_levels {
@@ -255,13 +255,11 @@ impl Elaborator {
                                 segment.parameters.len()
                             ));
                         }
-                        for (
-                            (param_name, subst_term_ast),
-                            ((param_name_template, expected_type)),
-                        ) in segment
-                            .parameters
-                            .iter()
-                            .zip(next_module.borrow().parameters.iter())
+                        for ((param_name, subst_term_ast), (param_name_template, expected_type)) in
+                            segment
+                                .parameters
+                                .iter()
+                                .zip(next_module.borrow().parameters.iter())
                         {
                             if param_name != param_name_template.name() {
                                 return Err(format!(
@@ -316,6 +314,7 @@ impl Elaborator {
                 }
             }
         }
+        println!("Finished elaborating module {}", current.name);
         Ok(())
     }
     pub fn current_env(&self) -> &ModuleEnv {
@@ -355,11 +354,18 @@ impl Elaborator {
             TermAST::Pred(term_ast) => Ok(Term::Pred(Box::new(self.elab_expr(term_ast)?))),
             TermAST::IsZero(term_ast) => Ok(Term::IsZero(Box::new(self.elab_expr(term_ast)?))),
             TermAST::Identifier(name) => {
+                // check from term scope
+                for (var_name, term_var) in self.current_env().term_scope.iter().rev() {
+                    if var_name == name {
+                        return Ok(Term::Var(term_var.clone()));
+                    }
+                }
+
+                // check from name resolution
                 let item = self
                     .name_resolution(name)
                     .ok_or(format!("Identifier {} not found", name))?;
                 match item {
-                    PointedByIdentifier::TermVar(term_var) => Ok(Term::Var(term_var)),
                     PointedByIdentifier::DefinedConstant(defined_constant) => {
                         Ok(defined_constant.term.clone())
                     }
