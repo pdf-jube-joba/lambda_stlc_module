@@ -1,68 +1,51 @@
 #[derive(Debug, Clone)]
-pub enum TypeAST {
-    BoolAST,
-    NatAST,
-    Arrow(Box<TypeAST>, Box<TypeAST>),
-}
-
-#[derive(Debug, Clone)]
 pub enum TermAST {
+    Sort(crate::kernel::Sort),
     Identifier(String),
-    Access {
-        module_name: String,
-        name: String,
+    Prod {
+        param: String,
+        param_type: Box<TermAST>,
+        body: Box<TermAST>,
     },
     Abs {
         param: String,
-        param_type: TypeAST,
+        param_type: Box<TermAST>,
         body: Box<TermAST>,
     },
     App {
         func: Box<TermAST>,
         arg: Box<TermAST>,
     },
-    TrueAST,
-    FalseAST,
-    If {
-        cond: Box<TermAST>,
-        then_branch: Box<TermAST>,
-        else_branch: Box<TermAST>,
-    },
-    Nat(usize),
+    // natural number
+    Nat,
+    Zero,
     Succ(Box<TermAST>),
-    Pred(Box<TermAST>),
-    IsZero(Box<TermAST>),
+    PrimitiveRecursion {
+        motive: Box<TermAST>,
+        zero_case: Box<TermAST>,
+        succ_case: Box<TermAST>,
+        n: Box<TermAST>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum Declaration {
     Definition {
         name: String,
-        ty: TypeAST,
+        ty: TermAST,
         term: TermAST,
     },
     Import {
-        path: ImportPath,
+        module_name: String,
+        parameters: Vec<(String, TermAST)>,
         name_as: String,
     },
     ChildModule(Module),
 }
 
 #[derive(Debug, Clone)]
-pub enum ImportPath {
-    Parent(usize, Vec<NamedSegment>),
-    FromRoot(Vec<NamedSegment>),
-}
-
-#[derive(Debug, Clone)]
-pub struct NamedSegment {
-    pub module_name: String,
-    pub parameters: Vec<(String, TermAST)>,
-}
-
-#[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
-    pub parameters: Vec<(String, TypeAST)>,
+    pub parameters: Vec<(String, TermAST)>,
     pub body: Vec<Declaration>,
 }
